@@ -61,3 +61,24 @@ Implement a fully client-side expense tracker using HTML5, CSS3, and Vanilla Jav
 - [x] 12. Set up browser-based test runner in `tests/index.html`
 
 - [x] 13. Final checkpoint — all tests pass and wiring is complete
+
+## Notes
+
+- All tasks are client-side only and execute in the browser environment without build dependencies.
+- Each task references specific requirements for traceability.
+- Checkpoints validate core features incrementally.
+- Amount values are handled as numbers formatted to 2 decimal places to ensure calculation accuracy.
+
+## Tasks
+
+```json
+{
+  "waves": [
+    { "id": 0, "tasks": ["1"] },
+    { "id": 1, "tasks": ["2.1", "3.1", "4"] },
+    { "id": 2, "tasks": ["2.2", "2.3", "3.2", "5.1", "6.1"] },
+    { "id": 3, "tasks": ["5.2", "5.3", "5.4", "6.2", "6.3", "6.4", "8.1", "9.1"] },
+    { "id": 4, "tasks": ["5.5", "8.2", "9.2", "10"] },
+    { "id": 5, "tasks": ["11", "12", "13"] }
+  ]
+}

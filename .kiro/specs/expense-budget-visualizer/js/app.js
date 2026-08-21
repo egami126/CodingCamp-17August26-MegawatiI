@@ -5,9 +5,9 @@
 const CATEGORIES = ["Food", "Transport", "Fun"];
 
 const CATEGORY_COLORS = {
-  Food:      "#2ecc71",
-  Transport: "#3498db",
-  Fun:       "#e67e22",
+  Food:      "#8aaefc",
+  Transport: "#17f77c",
+  Fun:       "#f387c2",
 };
 
 let transactions = [];
