@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Expense Budget Visualizer — Property Tests</title>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    #results { margin-top: 1rem; }
+    .pass { color: green; font-weight: bold; }
+    .fail { color: red;   font-weight: bold; }
+    pre  { background: #f4f4f4; padding: .5rem; border-radius: 4px; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <h1>Property Tests</h1>
+  <p>Open the browser console for detailed output. Results are also shown below.</p>
+  <div id="results"></div>
+
+  <!--
+    Minimal DOM stubs required so app.js can load without throwing.
+    Functions that touch the DOM (renderList, renderBalance, renderChart)
+    are not called during these pure-function tests; only the Store and
+    Validator are exercised.
+  -->
+
+  <!-- Stub elements referenced during initialisation or error display -->
+  <span  id="total-balance"></span>
+  <ul    id="transaction-list"></ul>
+  <p     id="list-empty-state"></p>
+  <canvas id="expense-chart"></canvas>
+  <p     id="chart-empty-state"></p>
+  <form  id="expense-form">
+    <input  id="item-name"    type="text" />
+    <input  id="item-amount"  type="number" />
+    <select id="item-category"></select>
+    <button type="submit">Add</button>
+  </form>
+  <div id="chart-section"></div>
+
+  <!-- fast-check from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/fast-check@3/lib/bundle/fast-check.min.js"></script>
+
+  <!-- Application under test -->
+  <script src="../js/app.js"></script>
+
+  <script>
+    // =========================================================================
+    // Test harness helpers
+    // =========================================================================
+
+    const resultsEl = document.getElementById("results");
+
+    /**
+     * @param {string} name
+     * @param {() => void} fn  — throws on failure (fast-check style)
+     */
+    function runTest(name, fn) {
+      try {
+        fn();
+        console.log(`%cPASS%c  ${name}`, "color:green;font-weight:bold", "");
+        resultsEl.insertAdjacentHTML(
+          "beforeend",
+          `<p><span class="pass">PASS</span>  ${name}</p>`
+        );
+      } catch (err) {
+        console.error(`FAIL  ${name}`, err);
+        resultsEl.insertAdjacentHTML(
+          "beforeend",
+          `<p><span class="fail">FAIL</span>  ${name}<pre>${escHtml(String(err))}</pre></p>`
+        );
+      }
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // =========================================================================
+    // Arbitraries — helpers
+    // =========================================================================
+
+    /** Valid item names: non-empty strings of 1–100 printable characters. */
+    const validNameArb = fc.string({ minLength: 1, maxLength: 100 });
+
+    /**
+     * Valid amount strings: values in [0.01, 999999.99] with at most 2 dp.
+     * We generate integer cent values (1 – 99999999) and divide by 100
+     * so we stay in range and always have at most 2 dp.
+     */
+    const validAmountArb = fc
+      .integer({ min: 1, max: 99999999 })          // 0.01 – 999999.99 in cents
+      .map((cents) => (cents / 100).toFixed(2));    // always exactly 2 dp, string
+
+    /** Valid categories. */
+    const validCategoryArb = fc.constantFrom("Food", "Transport", "Fun");
+
+    /** A complete valid triple. */
+    const validTripleArb = fc.record({
+      name:     validNameArb,
+      amount:   validAmountArb,
+      category: validCategoryArb,
+    });
+
+    // -------------------------------------------------------------------------
+    // Invalid name arbitraries
+    // -------------------------------------------------------------------------
+
+    /** Empty string — always invalid. */
+    const emptyNameArb = fc.constant("");
+
+    /** Whitespace-only strings — trimmed length is 0, so invalid. */
+    const whitespaceNameArb = fc.stringOf(
+      fc.constantFrom(" ", "\t", "\n"),
+      { minLength: 1, maxLength: 20 }
+    );
+
+    /** Strings longer than 100 characters. */
+    const longNameArb = fc.string({ minLength: 101, maxLength: 200 });
+
+    /** All invalid names combined. */
+    const invalidNameArb = fc.oneof(emptyNameArb, whitespaceNameArb, longNameArb);
+
+    // -------------------------------------------------------------------------
+    // Invalid amount arbitraries
+    // -------------------------------------------------------------------------
+
+    /** Non-numeric strings. */
+    const nonNumericAmountArb = fc
+      .string({ minLength: 1, maxLength: 20 })
+      .filter((s) => !/^\d+(\.\d+)?$/.test(s.trim()) && s.trim() !== "");
+
+    /** Zero — below minimum. */
+    const zeroAmountArb = fc.constant("0");
+
+    /** Negative amounts. */
+    const negativeAmountArb = fc
+      .integer({ min: 1, max: 999999 })
+      .map((n) => `-${n}`);
+
+    /** Amount below minimum (0.001 – 0.009). */
+    const belowMinAmountArb = fc
+      .integer({ min: 1, max: 9 })
+      .map((n) => `0.00${n}`);
+
+    /** Amount above maximum. */
+    const aboveMaxAmountArb = fc
+      .integer({ min: 100000000, max: 200000000 }) // 1,000,000.00 – 2,000,000.00
+      .map((cents) => (cents / 100).toFixed(2));
+
+    /** More than 2 decimal places. */
+    const tooManyDpAmountArb = fc
+      .integer({ min: 1, max: 99999999 })
+      .map((cents) => (cents / 1000).toFixed(3)); // always 3 dp
+
+    /** All invalid amounts combined. */
+    const invalidAmountArb = fc.oneof(
+      nonNumericAmountArb,
+      zeroAmountArb,
+      negativeAmountArb,
+      belowMinAmountArb,
+      aboveMaxAmountArb,
+      tooManyDpAmountArb
+    );
+
+    // -------------------------------------------------------------------------
+    // Invalid category arbitraries
+    // -------------------------------------------------------------------------
+
+    /** Strings that are not one of the three valid categories. */
+    const invalidCategoryArb = fc
+      .string({ minLength: 0, maxLength: 30 })
+      .filter((s) => !["Food", "Transport", "Fun"].includes(s));
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // P1a — Valid triple → validateForm returns { valid: true }
+    // -------------------------------------------------------------------------
+    runTest("P1a — valid triple → valid:true (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+      fc.assert(
+        fc.property(validTripleArb, ({ name, amount, category }) => {
+          const result = validateForm(name, amount, category);
+          if (!result.valid) {
+            throw new Error(
+              `Expected valid:true for name=${JSON.stringify(name)}, ` +
+              `amount=${JSON.stringify(amount)}, category=${JSON.stringify(category)}. ` +
+              `Got errors: ${JSON.stringify(result.errors)}`
+            );
+          }
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // P1b — Invalid name → validateForm returns { valid: false }, errors.name non-null
+    // -------------------------------------------------------------------------
+    runTest("P1b — invalid name → valid:false + errors.name set (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+      fc.assert(
+        fc.property(
+          invalidNameArb,
+          validAmountArb,
+          validCategoryArb,
+          (name, amount, category) => {
+            const result = validateForm(name, amount, category);
+            if (result.valid) {
+              throw new Error(
+                `Expected valid:false for invalid name=${JSON.stringify(name)}`
+              );
+            }
+            if (result.errors.name === null) {
+              throw new Error(
+                `Expected errors.name to be non-null for invalid name=${JSON.stringify(name)}`
+              );
+            }
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // P1c — Invalid amount → validateForm returns { valid: false }, errors.amount non-null
+    // -------------------------------------------------------------------------
+    runTest("P1c — invalid amount → valid:false + errors.amount set (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+      fc.assert(
+        fc.property(
+          validNameArb,
+          invalidAmountArb,
+          validCategoryArb,
+          (name, amount, category) => {
+            const result = validateForm(name, amount, category);
+            if (result.valid) {
+              throw new Error(
+                `Expected valid:false for invalid amount=${JSON.stringify(amount)}`
+              );
+            }
+            if (result.errors.amount === null) {
+              throw new Error(
+                `Expected errors.amount to be non-null for invalid amount=${JSON.stringify(amount)}`
+              );
+            }
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // P1d — Invalid category → validateForm returns { valid: false }, errors.category non-null
+    // -------------------------------------------------------------------------
+    runTest("P1d — invalid category → valid:false + errors.category set (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+      fc.assert(
+        fc.property(
+          validNameArb,
+          validAmountArb,
+          invalidCategoryArb,
+          (name, amount, category) => {
+            const result = validateForm(name, amount, category);
+            if (result.valid) {
+              throw new Error(
+                `Expected valid:false for invalid category=${JSON.stringify(category)}`
+              );
+            }
+            if (result.errors.category === null) {
+              throw new Error(
+                `Expected errors.category to be non-null for invalid category=${JSON.stringify(category)}`
+              );
+            }
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // P1e — All-invalid triple → valid:false, ALL error fields non-null
+    // -------------------------------------------------------------------------
+    runTest("P1e — all-invalid triple → valid:false + all errors set (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+      fc.assert(
+        fc.property(
+          invalidNameArb,
+          invalidAmountArb,
+          invalidCategoryArb,
+          (name, amount, category) => {
+            const result = validateForm(name, amount, category);
+            if (result.valid) {
+              throw new Error(
+                `Expected valid:false for all-invalid triple: ` +
+                `name=${JSON.stringify(name)}, amount=${JSON.stringify(amount)}, ` +
+                `category=${JSON.stringify(category)}`
+              );
+            }
+            if (result.errors.name === null) {
+              throw new Error(`Expected errors.name non-null for invalid name=${JSON.stringify(name)}`);
+            }
+            if (result.errors.amount === null) {
+              throw new Error(`Expected errors.amount non-null for invalid amount=${JSON.stringify(amount)}`);
+            }
+            if (result.errors.category === null) {
+              throw new Error(`Expected errors.category non-null for invalid category=${JSON.stringify(category)}`);
+            }
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // P1f — Individual field validators are consistent with validateForm
+    // When validateName/Amount/Category individually return valid:false,
+    // validateForm must also return valid:false with the matching error set.
+    // -------------------------------------------------------------------------
+    runTest("P1f — individual validators consistent with validateForm (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 1: Validator accepts only well-formed inputs
+      fc.assert(
+        fc.property(
+          fc.string({ maxLength: 200 }),       // any name
+          fc.string({ maxLength: 30 }),         // any amount string
+          fc.string({ maxLength: 30 }),         // any category string
+          (name, amount, category) => {
+            const nameOk     = validateName(name).valid;
+            const amountOk   = validateAmount(amount).valid;
+            const categoryOk = validateCategory(category).valid;
+            const formResult = validateForm(name, amount, category);
+
+            const expectedValid = nameOk && amountOk && categoryOk;
+            if (formResult.valid !== expectedValid) {
+              throw new Error(
+                `Consistency failure: individual=(name:${nameOk}, amount:${amountOk}, cat:${categoryOk}) ` +
+                `but validateForm.valid=${formResult.valid} ` +
+                `for name=${JSON.stringify(name)}, amount=${JSON.stringify(amount)}, ` +
+                `category=${JSON.stringify(category)}`
+              );
+            }
+
+            // When a field is invalid, validateForm must surface its error
+            if (!nameOk && formResult.errors.name === null) {
+              throw new Error(`errors.name should be non-null when validateName fails`);
+            }
+            if (!amountOk && formResult.errors.amount === null) {
+              throw new Error(`errors.amount should be non-null when validateAmount fails`);
+            }
+            if (!categoryOk && formResult.errors.category === null) {
+              throw new Error(`errors.category should be non-null when validateCategory fails`);
+            }
+
+            return true;
+          }
+        ),
+        { numRuns: 200 }  // extra coverage for the combined property
+      );
+    });
+
+    console.log("%cAll Property 1 tests completed. See results above.", "font-weight:bold");
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 3: Transaction list sort order invariant
+    // Validates: Requirements 2.1
+    // =========================================================================
+
+    /**
+     * Arbitrary for a single Transaction with a distinct, random timestamp.
+     * We keep timestamps in a realistic ms range (1 – 2,000,000,000,000).
+     */
+    const arbTransactionForSort = fc.record({
+      id:        fc.string({ minLength: 1, maxLength: 36 }),
+      name:      fc.string({ minLength: 1, maxLength: 100 }),
+      amount:    fc.integer({ min: 1, max: 99999999 }).map((c) => (c / 100).toFixed(2)),
+      category:  fc.constantFrom("Food", "Transport", "Fun"),
+      timestamp: fc.integer({ min: 1, max: 2_000_000_000_000 }),
+    });
+
+    runTest("Property 3: Transaction list sort order invariant (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 3: Transaction list sort order invariant
+      fc.assert(
+        fc.property(
+          fc.array(arbTransactionForSort, { minLength: 1, maxLength: 50 }),
+          (txArray) => {
+            // Set global state that renderList() reads.
+            transactions = txArray.slice();
+
+            // Render into the existing DOM stub.
+            renderList();
+
+            // Collect rendered <li> elements in DOM order.
+            const liElements = Array.from(
+              document.querySelectorAll("#transaction-list li")
+            );
+
+            // Build the expected order: sort descending by timestamp.
+            const expectedOrder = txArray
+              .slice()
+              .sort((a, b) => b.timestamp - a.timestamp);
+
+            // The rendered count must match the transaction count.
+            if (liElements.length !== txArray.length) {
+              throw new Error(
+                `Rendered ${liElements.length} <li> elements but expected ${txArray.length}`
+              );
+            }
+
+            // Each rendered <li> must carry the data-id of the expected entry.
+            for (let i = 0; i < expectedOrder.length; i++) {
+              const renderedId = liElements[i].dataset.id;
+              const expectedId = expectedOrder[i].id;
+              if (renderedId !== expectedId) {
+                throw new Error(
+                  `Sort order violation at position ${i}: ` +
+                  `rendered data-id="${renderedId}", expected="${expectedId}". ` +
+                  `Transactions: ${JSON.stringify(
+                    txArray.map((t) => ({ id: t.id, timestamp: t.timestamp }))
+                  )}`
+                );
+              }
+            }
+
+            // Cleanup: restore empty state so subsequent tests start clean.
+            transactions = [];
+            renderList();
+
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    console.log("%cAll Property 3 tests completed. See results above.", "font-weight:bold");
+
+    // =========================================================================
+    // Shared Transaction arbitrary (reused by Properties 10 and 11)
+    // =========================================================================
+
+    /** Full valid Transaction object arbitrary. */
+    const arbTransactionFull = fc.record({
+      id:        fc.string({ minLength: 1, maxLength: 36 }),
+      name:      fc.string({ minLength: 1, maxLength: 100 }),
+      amount:    fc.integer({ min: 1, max: 99999999 }).map((cents) => (cents / 100).toFixed(2)),
+      category:  fc.constantFrom("Food", "Transport", "Fun"),
+      timestamp: fc.integer({ min: 1, max: 2_000_000_000_000 }),
+    });
+
+    /** Arrays of 0–100 Transactions. */
+    const arbTransactionArray = fc.array(arbTransactionFull, { minLength: 0, maxLength: 100 });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 10: Transaction JSON serialization round-trip
+    // Validates: Requirements 6.5, 6.6
+    // =========================================================================
+
+    runTest("Property 10: Transaction JSON serialization round-trip (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 10: Transaction JSON serialization round-trip
+      fc.assert(
+        fc.property(arbTransactionArray, (txArray) => {
+          const serialized   = JSON.stringify(txArray);
+          const deserialized = JSON.parse(serialized);
+
+          if (deserialized.length !== txArray.length) {
+            throw new Error(
+              `Length mismatch after round-trip: expected ${txArray.length}, got ${deserialized.length}`
+            );
+          }
+
+          for (let i = 0; i < txArray.length; i++) {
+            const orig  = txArray[i];
+            const round = deserialized[i];
+            if (
+              round.id       !== orig.id       ||
+              round.name     !== orig.name     ||
+              round.amount   !== orig.amount   ||
+              round.category !== orig.category
+            ) {
+              throw new Error(
+                `Field mismatch at index ${i}: original=${JSON.stringify(orig)}, ` +
+                `round-trip=${JSON.stringify(round)}`
+              );
+            }
+          }
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 11: Storage round-trip preserves the full transaction set
+    // Validates: Requirements 6.1, 6.2, 6.3
+    // =========================================================================
+
+    runTest("Property 11: Storage round-trip preserves the full transaction set (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 11: Storage round-trip preserves the full transaction set
+      fc.assert(
+        fc.property(arbTransactionArray, (originalArray) => {
+          // Isolate each run: clear any existing LS data for this key.
+          localStorage.removeItem("transactions");
+
+          // Point the module-level `transactions` array at our generated data.
+          // app.js is a non-module script so its `var transactions` is on window.
+          transactions = originalArray.slice(); // shallow copy to avoid aliasing issues
+
+          // Exercise: persist to LS, then reload from LS back into `transactions`.
+          saveToStorage();
+          loadFromStorage();
+
+          // Assert: length is preserved.
+          if (transactions.length !== originalArray.length) {
+            throw new Error(
+              `Length mismatch: expected ${originalArray.length}, got ${transactions.length}`
+            );
+          }
+
+          // Assert: every field of every entry is preserved.
+          for (let i = 0; i < originalArray.length; i++) {
+            const orig    = originalArray[i];
+            const reloaded = transactions[i];
+            if (
+              reloaded.id        !== orig.id        ||
+              reloaded.name      !== orig.name      ||
+              reloaded.amount    !== orig.amount    ||
+              reloaded.category  !== orig.category  ||
+              reloaded.timestamp !== orig.timestamp
+            ) {
+              throw new Error(
+                `Entry mismatch at index ${i}:\n` +
+                `  original : ${JSON.stringify(orig)}\n` +
+                `  reloaded : ${JSON.stringify(reloaded)}`
+              );
+            }
+          }
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+
+      // Clean up after all runs so we don't pollute the app's real storage.
+      localStorage.removeItem("transactions");
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 7: Total balance equals the sum of all transaction amounts
+    // Validates: Requirements 4.1, 4.2, 3.2, 4.3
+    // =========================================================================
+
+    runTest("Property 7: Total balance equals the sum of all transaction amounts (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 7: Total balance equals the sum of all transaction amounts
+      fc.assert(
+        fc.property(arbTransactionArray, (txArray) => {
+          // Set global transactions to the generated array.
+          transactions = txArray.slice();
+
+          // Call renderBalance() which reads global `transactions` and writes to the DOM.
+          renderBalance();
+
+          // Read the displayed value from the DOM.
+          const displayed = document.getElementById("total-balance").textContent;
+
+          // Compute expected value: sum of parseFloat(tx.amount), skip NaN (contribute 0).
+          const sum = txArray.reduce((acc, tx) => {
+            const val = parseFloat(tx.amount);
+            return acc + (isNaN(val) ? 0 : val);
+          }, 0);
+          const expected = "$" + (Math.round(sum * 100) / 100).toFixed(2);
+
+          if (displayed !== expected) {
+            throw new Error(
+              `Balance mismatch: expected ${JSON.stringify(expected)}, ` +
+              `got ${JSON.stringify(displayed)} ` +
+              `(array length=${txArray.length}, sum=${sum})`
+            );
+          }
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+
+      // Edge case: empty array must show $0.00
+      transactions = [];
+      renderBalance();
+      const emptyDisplayed = document.getElementById("total-balance").textContent;
+      if (emptyDisplayed !== "$0.00") {
+        throw new Error(
+          `Expected "$0.00" for empty transaction array, got ${JSON.stringify(emptyDisplayed)}`
+        );
+      }
+
+      // Clean up.
+      transactions = [];
+      document.getElementById("total-balance").textContent = "";
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 5: Every rendered transaction item has a delete button
+    // Validates: Requirements 2.5
+    // =========================================================================
+
+    runTest("Property 5: Every rendered item has a delete button with matching data-id (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 5: Every rendered transaction item has a delete button
+      fc.assert(
+        fc.property(
+          fc.array(arbTransactionFull, { minLength: 1, maxLength: 20 }),
+          (txArray) => {
+            // Set the module-level transactions to the generated non-empty array.
+            transactions = txArray.slice();
+
+            // Render the list into the DOM stub.
+            renderList();
+
+            // Query all rendered <li> elements.
+            const listItems = document.querySelectorAll("#transaction-list li");
+
+            if (listItems.length !== txArray.length) {
+              throw new Error(
+                `Expected ${txArray.length} <li> elements but found ${listItems.length}`
+              );
+            }
+
+            // Build a Set of valid ids for O(1) lookup.
+            const validIds = new Set(txArray.map((tx) => tx.id));
+
+            for (let i = 0; i < listItems.length; i++) {
+              const li  = listItems[i];
+              const btn = li.querySelector("button[data-id]");
+
+              if (!btn) {
+                throw new Error(
+                  `<li> at index ${i} has no <button data-id> element`
+                );
+              }
+
+              const btnId = btn.getAttribute("data-id");
+
+              if (!validIds.has(btnId)) {
+                throw new Error(
+                  `<button data-id="${btnId}"> at index ${i} does not match any transaction id`
+                );
+              }
+            }
+
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+
+      // Clean up: reset transactions and re-render to empty state.
+      transactions = [];
+      renderList();
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 8: Balance is always formatted to exactly 2 decimal places
+    // Validates: Requirements 4.5
+    // =========================================================================
+
+    runTest("Property 8: Balance always formatted to exactly 2 decimal places (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 8: Balance is always formatted to exactly 2 decimal places
+
+      /**
+       * Generate arrays of amounts with 3 decimal places (e.g. "1.235") so
+       * their floating-point sum will frequently produce a fractional-cent
+       * intermediate.  We inject these directly into `transactions` to force
+       * renderBalance() through adversarial arithmetic without going via the
+       * validator (which correctly rejects 3-dp amounts).
+       */
+      const arbThreeDpAmounts = fc.array(
+        fc.integer({ min: 1, max: 99999 }).map((n) => (n / 1000).toFixed(3)),
+        { minLength: 1, maxLength: 50 }
+      );
+
+      const balanceEl = document.getElementById("total-balance");
+
+      fc.assert(
+        fc.property(arbThreeDpAmounts, (amounts) => {
+          // Inject fabricated transactions directly, bypassing the validator.
+          transactions = amounts.map((amt, i) => ({
+            id:        `test-p8-${i}`,
+            name:      `Item ${i}`,
+            amount:    amt,
+            category:  "Food",
+            timestamp: Date.now() + i,
+          }));
+
+          renderBalance();
+
+          const displayed = balanceEl ? balanceEl.textContent : "";
+
+          // Must match: "$" followed by one-or-more digits, a dot,
+          // then EXACTLY 2 digits and nothing more.
+          const pattern = /^\$\d+\.\d{2}$/;
+          if (!pattern.test(displayed)) {
+            throw new Error(
+              `Balance "${displayed}" does not match /^\\$\\d+\\.\\d{2}$/. ` +
+              `Amounts: ${JSON.stringify(amounts)}`
+            );
+          }
+
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+
+      // Clean up — restore empty state so subsequent tests start fresh.
+      transactions = [];
+      if (balanceEl) balanceEl.textContent = "$0.00";
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 4: Amount formatting invariant
+    // Validates: Requirements 2.1
+    // =========================================================================
+
+    runTest("Property 4: Amount formatting invariant (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 4: Amount formatting invariant
+
+      /**
+       * Approach: test the formatting formula directly without DOM involvement.
+       * renderList() formats each amount as "$" + parseFloat(tx.amount).toFixed(2).
+       * For any valid amount string, that expression must match /^\$\d+\.\d{2}$/.
+       */
+      const arbValidAmount = fc
+        .integer({ min: 1, max: 99999999 })
+        .map((cents) => (cents / 100).toFixed(2));
+
+      fc.assert(
+        fc.property(arbValidAmount, (amount) => {
+          const formatted = "$" + parseFloat(amount).toFixed(2);
+
+          // Must be "$" followed by one or more digits, a dot, then EXACTLY 2 digits.
+          const pattern = /^\$\d+\.\d{2}$/;
+          if (!pattern.test(formatted)) {
+            throw new Error(
+              `Formatted amount "${formatted}" for input "${amount}" ` +
+              `does not match /^\\$\\d+\\.\\d{2}$/`
+            );
+          }
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 6: Deleting a transaction removes it from the list
+    // Validates: Requirements 3.1
+    // =========================================================================
+
+    runTest("Property 6: Deleting a transaction removes it from the list (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 6: Deleting a transaction removes it from the list
+      fc.assert(
+        fc.property(
+          fc.array(arbTransactionFull, { minLength: 1, maxLength: 20 }),
+          fc.integer({ min: 0, max: 19 }),
+          (txArray, rawIndex) => {
+            // Deduplicate by id so a delete always removes exactly one entry.
+            const seen = new Set();
+            const uniqueArray = txArray.filter((tx) => {
+              if (seen.has(tx.id)) return false;
+              seen.add(tx.id);
+              return true;
+            });
+            if (uniqueArray.length === 0) return true; // skip degenerate shrink
+
+            // Isolate localStorage for this run.
+            localStorage.removeItem("transactions");
+
+            // Set module-level state to a fresh copy of the unique array.
+            transactions = uniqueArray.slice();
+
+            // Pick the entry to delete, clamped to the actual array length.
+            const index  = rawIndex % uniqueArray.length;
+            const target = uniqueArray[index];
+            const originalLength = transactions.length;
+
+            // Exercise: call deleteTransaction which mutates `transactions` and
+            // writes to localStorage.
+            deleteTransaction(target.id);
+
+            // Assert 1: array length decreased by exactly 1.
+            if (transactions.length !== originalLength - 1) {
+              throw new Error(
+                `Expected length ${originalLength - 1} after delete, ` +
+                `got ${transactions.length}. ` +
+                `Deleted id="${target.id}", original length=${originalLength}`
+              );
+            }
+
+            // Assert 2: no remaining entry has the deleted id.
+            const stillPresent = transactions.some((tx) => tx.id === target.id);
+            if (stillPresent) {
+              throw new Error(
+                `Transaction with id="${target.id}" still present after deleteTransaction()`
+              );
+            }
+
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
+
+      // Clean up.
+      transactions = [];
+      localStorage.removeItem("transactions");
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 9: Pie chart proportions match category spending shares
+    // Validates: Requirements 5.1, 5.4, 5.8
+    // =========================================================================
+
+    runTest("Property 9: Pie chart proportions match category spending shares (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 9: Pie chart proportions match category spending shares
+
+      /**
+       * Strategy: `chart` is null in the test context because Chart.js is not
+       * loaded here.  `renderChart()` returns early when `chart === null`.
+       *
+       * We temporarily replace the module-level `chart` variable with a minimal
+       * mock object that captures whatever `renderChart()` sets on `chart.data`.
+       * After the assertion we restore `chart = null` so subsequent tests are
+       * unaffected.
+       */
+
+      // Reuse the shared full-transaction arbitrary (already declared above).
+      // We need at least one transaction so there is at least one non-zero category.
+      const arbNonEmptyTxArray = fc.array(arbTransactionFull, { minLength: 1, maxLength: 50 });
+
+      fc.assert(
+        fc.property(arbNonEmptyTxArray, (txArray) => {
+          // --- Install chart mock ---
+          const chartMock = {
+            data: {
+              labels: [],
+              datasets: [{ data: [], backgroundColor: [] }],
+            },
+            update() {}, // no-op
+          };
+          chart = chartMock; // temporarily replace module-level `chart`
+
+          // Make canvas and empty-state elements visible so renderChart()
+          // doesn't trip on missing elements (they exist in the DOM stub above).
+          const canvasEl     = document.getElementById("expense-chart");
+          const emptyStateEl = document.getElementById("chart-empty-state");
+
+          // --- Set transactions and call renderChart() ---
+          transactions = txArray.slice();
+          renderChart();
+
+          // --- Compute expected per-category totals independently ---
+          const expectedTotals = { Food: 0, Transport: 0, Fun: 0 };
+          txArray.forEach((tx) => {
+            const val = parseFloat(tx.amount);
+            if (!isNaN(val) && expectedTotals.hasOwnProperty(tx.category)) {
+              expectedTotals[tx.category] += val;
+            }
+          });
+          // Round to 2 dp, matching renderChart()'s own rounding.
+          ["Food", "Transport", "Fun"].forEach((cat) => {
+            expectedTotals[cat] = Math.round(expectedTotals[cat] * 100) / 100;
+          });
+
+          // Categories that should appear in the chart (total > 0), in CATEGORIES order.
+          const expectedLabels = ["Food", "Transport", "Fun"].filter(
+            (cat) => expectedTotals[cat] > 0
+          );
+          const expectedData = expectedLabels.map((cat) => expectedTotals[cat]);
+
+          // --- Assertion 1: labels contain exactly the non-zero categories ---
+          if (chartMock.data.labels.length !== expectedLabels.length) {
+            throw new Error(
+              `labels length mismatch: expected ${JSON.stringify(expectedLabels)}, ` +
+              `got ${JSON.stringify(chartMock.data.labels)}`
+            );
+          }
+          for (let i = 0; i < expectedLabels.length; i++) {
+            if (chartMock.data.labels[i] !== expectedLabels[i]) {
+              throw new Error(
+                `labels[${i}] mismatch: expected "${expectedLabels[i]}", ` +
+                `got "${chartMock.data.labels[i]}"`
+              );
+            }
+          }
+
+          // --- Assertion 2: data values match per-category sums ---
+          if (chartMock.data.datasets[0].data.length !== expectedData.length) {
+            throw new Error(
+              `data length mismatch: expected ${JSON.stringify(expectedData)}, ` +
+              `got ${JSON.stringify(chartMock.data.datasets[0].data)}`
+            );
+          }
+          for (let i = 0; i < expectedData.length; i++) {
+            const actual   = chartMock.data.datasets[0].data[i];
+            const expected = expectedData[i];
+            if (actual !== expected) {
+              throw new Error(
+                `data[${i}] (${expectedLabels[i]}) mismatch: expected ${expected}, got ${actual}`
+              );
+            }
+          }
+
+          // --- Assertion 3: zero-total categories are absent from both arrays ---
+          const zeroCats = ["Food", "Transport", "Fun"].filter(
+            (cat) => expectedTotals[cat] === 0
+          );
+          zeroCats.forEach((cat) => {
+            if (chartMock.data.labels.includes(cat)) {
+              throw new Error(
+                `Zero-total category "${cat}" should be absent from labels ` +
+                `but was found: ${JSON.stringify(chartMock.data.labels)}`
+              );
+            }
+          });
+
+          // --- Restore module-level chart ---
+          chart = null;
+          transactions = [];
+
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+
+      // Also verify the empty-state path: when all amounts are zero,
+      // renderChart() should pass empty labels and data arrays to the chart mock
+      // (zero-total categories are excluded, so nothing is visible).
+      const chartMockEmpty = {
+        data: {
+          labels: [],
+          datasets: [{ data: [], backgroundColor: [] }],
+        },
+        update() {},
+      };
+      chart = chartMockEmpty;
+      transactions = [
+        { id: "e1", name: "Free item", amount: "0.00", category: "Food",      timestamp: 1 },
+        { id: "e2", name: "Free ride",  amount: "0.00", category: "Transport", timestamp: 2 },
+      ];
+      // Note: "0.00" parses to 0 so no category total exceeds 0.
+      renderChart();
+
+      // When all totals are zero, labels and data must both be empty.
+      if (chartMockEmpty.data.labels.length !== 0) {
+        throw new Error(
+          `Expected empty labels when all totals are zero, ` +
+          `got ${JSON.stringify(chartMockEmpty.data.labels)}`
+        );
+      }
+      if (chartMockEmpty.data.datasets[0].data.length !== 0) {
+        throw new Error(
+          `Expected empty data when all totals are zero, ` +
+          `got ${JSON.stringify(chartMockEmpty.data.datasets[0].data)}`
+        );
+      }
+
+      // Restore.
+      chart = null;
+      transactions = [];
+    });
+
+    // =========================================================================
+    // Feature: expense-budget-visualizer, Property 2: Adding a valid transaction grows the list by exactly one
+    // Validates: Requirements 1.4
+    // =========================================================================
+
+    runTest("Property 2: Adding a valid transaction grows the list by exactly one (≥100 runs)", () => {
+      // Feature: expense-budget-visualizer, Property 2: Adding a valid transaction grows the list by exactly one
+      fc.assert(
+        fc.property(validTripleArb, ({ name, amount, category }) => {
+          // Isolate each iteration: start from a clean empty state.
+          transactions = [];
+          localStorage.removeItem("transactions");
+
+          const lengthBefore = transactions.length; // always 0 after reset
+
+          // Construct the Transaction object exactly as the form submit handler does.
+          // amount is stored as a 2-dp string to prevent floating-point drift.
+          const tx = {
+            id:        String(Date.now()) + Math.random().toString(36).substr(2),
+            name:      name.trim(),
+            amount:    String(parseFloat(amount).toFixed(2)),
+            category:  category,
+            timestamp: Date.now(),
+          };
+
+          addTransaction(tx);
+
+          // Assert 1: length increased by exactly 1.
+          if (transactions.length !== lengthBefore + 1) {
+            throw new Error(
+              `Expected length ${lengthBefore + 1} after addTransaction, ` +
+              `got ${transactions.length} ` +
+              `(name=${JSON.stringify(name)}, amount=${JSON.stringify(amount)}, ` +
+              `category=${JSON.stringify(category)})`
+            );
+          }
+
+          // Assert 2: the new entry is the last element (addTransaction appends).
+          const added = transactions[transactions.length - 1];
+
+          if (added.name !== name.trim()) {
+            throw new Error(
+              `name mismatch: expected ${JSON.stringify(name.trim())}, ` +
+              `got ${JSON.stringify(added.name)}`
+            );
+          }
+
+          const expectedAmount = String(parseFloat(amount).toFixed(2));
+          if (added.amount !== expectedAmount) {
+            throw new Error(
+              `amount mismatch: expected ${JSON.stringify(expectedAmount)}, ` +
+              `got ${JSON.stringify(added.amount)}`
+            );
+          }
+
+          if (added.category !== category) {
+            throw new Error(
+              `category mismatch: expected ${JSON.stringify(category)}, ` +
+              `got ${JSON.stringify(added.category)}`
+            );
+          }
+
+          return true;
+        }),
+        { numRuns: 100 }
+      );
+
+      // Clean up: reset state so subsequent tests are not affected.
+      transactions = [];
+      localStorage.removeItem("transactions");
+    });
+
+    console.log("%cAll property tests completed. See results above.", "font-weight:bold");
+  </script>
+</body>
+</html>
