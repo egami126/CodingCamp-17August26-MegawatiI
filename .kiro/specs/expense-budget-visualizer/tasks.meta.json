@@ -1,0 +1,21 @@
+{
+  "pbtResults": {
+    "2.3 Write property test for JSON serialization round-trip (Property 10)": {
+      "status": "passed",
+      "lastRunTimestamp": 1787233851253
+    },
+    "2.2 Write property test for storage round-trip (Property 11)": {
+      "status": "passed",
+      "lastRunTimestamp": 1787233981372
+    },
+    "6.2 Write property test for balance sum (Property 7)": {
+      "status": "passed",
+      "lastRunTimestamp": 1787234709821
+    },
+    "6.3 Write property test for balance formatting (Property 8)": {
+      "status": "passed",
+      "lastRunTimestamp": 1787234750203
+    }
+  },
+  "status": "completed"
+}
