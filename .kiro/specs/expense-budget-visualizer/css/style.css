@@ -2,28 +2,56 @@
    Expense & Budget Visualizer — css/style.css
    ============================================================================= */
 
-/* Reset & Base Styles */
+:root {
+  --bg-body: #f8f9fa;
+  --bg-card: #ffffff;
+  --text-primary: #212529;
+  --text-secondary: #6c757d;
+  --border-color: #e9ecef;
+  --input-border: #ced4da;
+  --primary-color: #3b99e0;
+  --primary-hover: #2b82c9;
+  --badge-bg: #f1f3f5;
+  --badge-text: #495057;
+  --danger-color: #e65245;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] {
+  --bg-body: #121212;
+  --bg-card: #1e1e1e;
+  --text-primary: #f8f9fa;
+  --text-secondary: #a0aec0;
+  --border-color: #2d3748;
+  --input-border: #4a5568;
+  --badge-bg: #2d3748;
+  --badge-text: #e2e8f0;
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 body {
-  background-color: #f8f9fa;
-  color: #212529;
+  background-color: var(--bg-body);
+  color: var(--text-primary);
   padding: 40px 20px;
   min-height: 100vh;
 }
 
 .app-container {
-  max-width: 900px;
+  max-width: 960px;
   margin: 0 auto;
 }
 
-/* Main Header */
+/* Header - Alignment Center & Position Absolute for Dark Mode Button */
 .main-header {
+  position: relative;
   text-align: center;
   margin-bottom: 28px;
 }
@@ -31,64 +59,135 @@ body {
 .main-header h1 {
   font-size: 28px;
   font-weight: 700;
-  color: #212529;
+  color: var(--text-primary);
+  text-align: center;
 }
 
-/* Card Styling */
+.btn-theme {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+@media (max-width: 600px) {
+  .main-header {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+  }
+  .btn-theme {
+    position: static;
+    transform: none;
+  }
+}
+
+/* Card Base Style */
 .card {
-  background: #ffffff;
-  border: 1px solid #e9ecef;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow);
   margin-bottom: 24px;
 }
 
 .card h2 {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
-  color: #212529;
+  color: var(--text-primary);
+}
+
+.card-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 20px;
 }
 
 /* Total Balance Card */
 .balance-card {
   text-align: center;
-  padding: 36px 24px;
+  padding: 32px 24px;
 }
 
 .balance-label {
   font-size: 13px;
   font-weight: 600;
-  color: #6c757d;
-  letter-spacing: 0.5px;
+  color: var(--text-secondary);
   text-transform: uppercase;
 }
 
 #total-balance {
-  font-size: 46px;
+  font-size: 44px;
   font-weight: 700;
-  color: #3b99e0;
-  margin-top: 10px;
+  color: var(--primary-color);
+  margin-top: 8px;
 }
 
-/* Layout Grid */
-.main-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+/* Layout Grid System */
+.main-layout {
+  display: flex;
+  flex-direction: column;
   gap: 24px;
 }
 
+/* Add Form (Left) & List (Right) */
+.top-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
 @media (max-width: 768px) {
-  .main-grid {
+  .top-row {
     grid-template-columns: 1fr;
   }
 }
 
+/* Chart Card */
+.bottom-row {
+  display: flex;
+  justify-content: center;
+}
+
+.bottom-row .chart-card {
+  width: 100%;
+  max-width: 520px;
+  text-align: center;
+  margin: 0 auto;
+}
+
 /* Transaction List Styling */
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.filter-group select {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
 .transaction-list {
   list-style: none;
-  max-height: 320px;
+  max-height: 280px;
   overflow-y: auto;
 }
 
@@ -96,97 +195,91 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 16px 0;
-  border-bottom: 1px solid #f1f3f5;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .transaction-item:last-child {
   border-bottom: none;
 }
 
-.tx-details {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
 .tx-name {
   font-size: 15px;
   font-weight: 700;
-  color: #212529;
+  color: var(--text-primary);
   margin-bottom: 4px;
 }
 
 .tx-amount {
   font-size: 15px;
   font-weight: 700;
-  color: #3b99e0;
-  margin-bottom: 8px;
+  color: var(--primary-color);
+  margin-bottom: 6px;
 }
 
-/* Category Badge (Standard Light Gray Box like in Screenshot) */
 .badge {
   display: inline-block;
-  background-color: #f1f3f5;
-  color: #495057;
+  background-color: var(--badge-bg);
+  color: var(--badge-text);
   font-size: 12px;
-  font-weight: 500;
-  padding: 3px 10px;
-  border-radius: 4px;
-}
-
-/* Delete Button */
-.btn-delete {
-  background-color: #e65245;
-  color: #ffffff;
-  border: none;
-  padding: 8px 18px;
-  border-radius: 4px;
-  font-size: 13px;
   font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
+  padding: 3px 8px;
+  border-radius: 4px;
 }
 
-.btn-delete:hover {
-  background-color: #d33c2f;
-}
-
-/* Form Styling */
+/* Form Inputs & Controls */
 .form-group {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .form-group label {
   display: block;
   font-size: 13px;
   font-weight: 700;
-  color: #333333;
-  margin-bottom: 8px;
+  color: var(--text-primary);
+  margin-bottom: 6px;
 }
 
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 14px;
-  color: #212529;
-  background-color: #ffffff;
-  outline: none;
-  transition: border-color 0.15s ease-in-out;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
 }
 
-.form-group input:focus,
-.form-group select:focus {
-  border-color: #3b99e0;
+.category-select-wrapper {
+  display: flex;
+  gap: 8px;
 }
 
-/* Add Transaction Button */
+.btn-secondary {
+  background-color: var(--border-color);
+  color: var(--text-primary);
+  border: none;
+  padding: 0 14px;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-delete {
+  background-color: var(--danger-color);
+  color: #ffffff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .btn-primary {
   width: 100%;
-  background-color: #3b99e0;
+  background-color: var(--primary-color);
   color: #ffffff;
   border: none;
   padding: 12px;
@@ -194,68 +287,22 @@ body {
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.15s ease;
-  margin-top: 8px;
 }
 
 .btn-primary:hover {
-  background-color: #2b82c9;
+  background-color: var(--primary-hover);
 }
 
-/* Empty State & Errors */
 .empty-state {
-  color: #868e96;
+  color: var(--text-secondary);
   font-size: 14px;
   text-align: center;
   padding: 24px 0;
 }
 
-.field-error {
-  color: #e65245;
-  font-size: 12px;
-  margin-top: 4px;
-  display: block;
-}
-
-#app-error-banner {
-  position: fixed;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: #e65245;
-  color: #ffffff;
-  padding: 10px 20px;
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  z-index: 1000;
-  font-size: 14px;
-}
-
-.app-error-close {
-  background: none;
-  border: none;
-  color: #ffffff;
-  font-size: 18px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-/* Chart Container */
-.chart-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.chart-card h2 {
-  width: 100%;
-}
-
+/* Chart Canvas Wrapper */
 .chart-wrapper {
   width: 100%;
   max-width: 320px;
-  margin: 0 auto;
+  margin: 16px auto 0 auto;
 }
